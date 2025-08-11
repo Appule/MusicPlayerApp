@@ -59,20 +59,46 @@ io.on('connection', (socket) => {
     socket.emit('queueUpdate', queue);
   });
 
+  socket.on('finished', () => {
+    playing = false;
+    playNext();
+  });
+
+  // 動画追加時にユニークIDを生成し、追加者のsocket.idも保持する
   socket.on('addVideo', (url) => {
     const videoId = extractVideoId(url);
-    // 名前と動画IDをオブジェクトでキューに保存
-    queue.push({ name: socket.clientName || '名無し', videoId });
-    console.log(`動画ID追加: ${videoId} (送信者: ${socket.clientName})`);
+    const uniqueId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+
+    queue.push({
+      id: uniqueId,
+      name: socket.clientName || '名無し',
+      videoId,
+      ownerSocketId: socket.id // 追加者の識別用
+    });
+    console.log(`動画追加: ${videoId} (送信者: ${socket.clientName}, id: ${uniqueId})`);
     broadcastQueue();
+
     if (!playing && hostSocket) {
       playNext();
     }
   });
 
-  socket.on('finished', () => {
-    playing = false;
-    playNext();
+  // 削除リクエストを受け取った時
+  socket.on('removeVideo', (id) => {
+    // キューからidが一致する要素を検索
+    const index = queue.findIndex(item => item.id === id);
+    if (index !== -1) {
+      // 削除リクエスト送信者が追加者と同じかチェック
+      if (queue[index].ownerSocketId === socket.id) {
+        queue.splice(index, 1);
+        console.log(`動画削除: id=${id}`);
+        broadcastQueue();
+      } else {
+        console.log(`削除拒否: id=${id}, socket.id=${socket.id} は追加者ではない`);
+        // 必要に応じて拒否通知を送る
+        socket.emit('removeDenied', id);
+      }
+    }
   });
 
   function playNext() {
