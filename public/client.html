@@ -51,7 +51,23 @@
 
       queue.forEach((item, i) => {
         const li = document.createElement('li');
-        li.textContent = `${i === 0 ? '[次再生] ' : ''}${item.name} - ${item.videoId}`;
+
+        // テキスト部分
+        li.textContent = `${i === 0 ? '[次再生] ' : ''}${item.name} - ${item.videoId} `;
+
+        // 削除ボタン作成
+        const btn = document.createElement('button');
+        btn.textContent = '削除';
+        btn.style.marginLeft = '8px';
+
+        // 削除ボタン押下時にサーバーに削除リクエスト送信
+        btn.addEventListener('click', () => {
+          if (confirm(`「${item.videoId}」をキューから削除しますか？`)) {
+            socket.emit('removeVideo', item.videoId);
+          }
+        });
+
+        li.appendChild(btn);
         listElem.appendChild(li);
       });
     });
