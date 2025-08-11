@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>ホスト画面</title>
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <h1>ホスト画面</h1>
+  <div id="player"></div>
+
+  <script>
+    const socket = io();
+    let player;
+
+    socket.emit('registerHost');
+
+    // YouTube Iframe API 読み込み
+    const tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+
+    window.onYouTubeIframeAPIReady = () => {
+      player = new YT.Player('player', {
+        height: '390',
+        width: '640',
+        videoId: '',
+        events: {
+          'onStateChange': onPlayerStateChange,
+          'onError': onPlayerError
+        }
+      });
+    };
+
+    // 再生終了時
+    function onPlayerStateChange(event) {
+      if (event.data === YT.PlayerState.ENDED) {
+        socket.emit('finished');
+      }
+    }
+
+    // 再生エラー時
+    function onPlayerError(event) {
+      console.warn("再生エラーコード:", event.data);
+      // 埋め込み不可などのエラーはスキップ
+      if ([2, 5, 100, 101, 150].includes(event.data)) {
+        socket.emit('finished');
+      }
+    }
+
+    // サーバーから再生指示
+    socket.on('playVideo', (videoId) => {
+      console.log("再生開始: " + videoId);
+      if (player && player.loadVideoById) {
+        player.loadVideoById(videoId);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>クライアント画面</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    #queueList {
+      margin-top: 10px;
+      border: 1px solid #ccc;
+      padding: 5px;
+      max-width: 400px;
+    }
+    #queueList li {
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>クライアント画面</h1>
+  <input type="text" id="videoUrl" placeholder="YouTube URLを入力" />
+  <button id="sendBtn">キューに追加</button>
+
+  <h3>再生キュー</h3>
+  <ol id="queueList"></ol>
+
+  <script>
+    const socket = io();
+
+    // ページ読み込み時に名前を入力させる
+    let clientName = prompt("あなたの名前を入力してください", "名無し");
+    if (!clientName) clientName = "名無し";
+    socket.emit('registerName', clientName);
+
+    document.getElementById('sendBtn').addEventListener('click', () => {
+      const url = document.getElementById('videoUrl').value.trim();
+      if (url) {
+        socket.emit('addVideo', url);
+        document.getElementById('videoUrl').value = '';
+      }
+    });
+
+    socket.on('queueUpdate', (queue) => {
+      const listElem = document.getElementById('queueList');
+      listElem.innerHTML = '';
+
+      if (queue.length === 0) {
+        listElem.innerHTML = '<li>キューは空です</li>';
+        return;
+      }
+
+      queue.forEach((item, i) => {
+        const li = document.createElement('li');
+        li.textContent = `${i === 0 ? '[次再生] ' : ''}${item.name} - ${item.videoId}`;
+        listElem.appendChild(li);
+      });
+    });
+  </script>
+</body>
+</html>
