@@ -39,24 +39,40 @@
   </div>
 
   <script>
+    function generateUUID() {
+      // 簡易的な UUID v4
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = (crypto.getRandomValues(new Uint8Array(1))[0] & 15) >> 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
     const socket = io();
-    let username = localStorage.getItem('username') || null;
-    
+
+    // ユーザーIDをローカルストレージから取得、なければ生成
+    let userId = localStorage.getItem('userId');
+    if (!userId) {
+      userId = 'u-' + generateUUID();
+      localStorage.setItem('userId', userId);
+    }
+
+    let username = localStorage.getItem('username');
     if (!username) {
-      username = prompt("ユーザー名を入力してください:");
+      username = prompt("ユーザー名を入力してください:", "名無し");
       localStorage.setItem('username', username);
     }
-    socket.emit('setUsername', username);
 
-    // ページ読み込み時に名前を入力させる
-    let clientName = prompt("あなたの名前を入力してください", "名無し");
-    if (!clientName) clientName = "名無し";
-    socket.emit('registerName', clientName);
+    console.log(userId, username);
+
+    socket.on('connect', () => {
+      socket.emit('registerUserParams', { id: userId, name: username });
+    });
 
     document.getElementById('sendBtn').addEventListener('click', () => {
       const url = document.getElementById('videoUrl').value.trim();
       if (url) {
-        socket.emit('addVideo', url);
+        socket.emit('addVideo', { url, username });
         document.getElementById('videoUrl').value = '';
       }
     });
@@ -120,7 +136,7 @@
         playBtn.textContent = '再生';
         playBtn.onclick = () => {
           const url = `https://www.youtube.com/watch?v=${item.videoId}`;
-          socket.emit('addVideo', url);
+          socket.emit('addVideo', { url, username });
         };
 
         const delBtn = document.createElement('button');
@@ -156,7 +172,7 @@
       const listElem = document.getElementById('queueList');
       listElem.innerHTML = '';
 
-      const myQueue = userQueues[socket.id] || [];
+      const myQueue = userQueues[userId] || [];
 
       if (!currentTrack && myQueue.length === 0) {
         listElem.innerHTML = '<li>何も再生されていません</li>';
@@ -169,7 +185,7 @@
         li.textContent = `[再生中] ${currentTrack.name || ''} - ${currentTrack.videoId || ''}`;
 
         // スキップボタン（自分が追加者の場合、または履歴曲は誰でもスキップ可）
-        if (currentTrack.isHistory || currentTrack.ownerSocketId === socket.id) {
+        if (currentTrack.isHistory || currentTrack.ownerUserId === userId) {
           const skipBtn = document.createElement('button');
           skipBtn.textContent = 'スキップ';
           skipBtn.style.marginLeft = '8px';

@@ -41,12 +41,14 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-let userQueues = {}; // socket.id => [動画オブジェクト]
-let userOrder = [];  // socket.id の配列、再生順
-let currentUserIndex = 0; // userOrder のインデックス（誰の番か）
+// ユーザーの待ち時間
+const waitTimes = {};
+const userQueues = {}; // userId => [動画オブジェクト]
+const socketIdToUserId = {};
 let currentTrack = null;
 let playing = false;
 let hostSocket = null;
+let trackStartTime = null;
 
 // 強化版 動画ID抽出
 function extractVideoId(url) {
@@ -83,44 +85,40 @@ function broadcastAllQueues() {
 }
 
 io.on('connection', (socket) => {
-  console.log(`クライアント接続: ${socket.id}`);
-
-  // 新規ユーザーのキューを初期化
-  if (!userQueues[socket.id]) userQueues[socket.id] = [];
-  if (!userOrder.includes(socket.id)) userOrder.push(socket.id);
-
-  socket.on('disconnect', () => {
-    console.log(`クライアント切断: ${socket.id}`);
-    // ユーザーデータ削除
-    delete userQueues[socket.id];
-    const idx = userOrder.indexOf(socket.id);
-    if (idx !== -1) {
-      userOrder.splice(idx, 1);
-      if (currentUserIndex >= userOrder.length) {
-        currentUserIndex = 0;
-      }
-    }
-  });
+  console.log(`新しい接続: socket.id=${socket.id}`);
 
   // 名前登録受信
-  socket.on('registerName', (name) => {
-    socket.clientName = name || '名無し';
-    console.log(`クライアント名登録: ${socket.clientName}`);
-    // キュー情報を送る（更新は名前付きで）
+  let userId, username;
+  socket.on('registerUserParams', ({ id, name }) => {
+    userId = id;
+    username = name;
+    socketIdToUserId[socket.id] = userId;
+    
+    const saves = loadUserSaves(username);
+    socket.emit('savedList', saves);
+    
+    // 新規を初期化
+    if (!waitTimes[userId]) {
+      waitTimes[userId] = { userId, username, time: 0 };
+    } else {
+      waitTimes[userId].username = username; // ユーザー名の更新
+    }
+    if (!userQueues[userId]) userQueues[userId] = [];
+
+    // クライアントへ現在の状態を送る
+    console.log(`ユーザー登録: ${userId} (socket.id=${socket.id})`);
     socket.emit('queueUpdate', { currentTrack, userQueues });
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`切断: socket.id=${socket.id} userId=${userId}`);
+    delete socketIdToUserId[socket.id];
   });
 
   socket.on('registerHost', () => {
     hostSocket = socket;
     console.log('ホスト登録');
     socket.emit('queueUpdate', { currentTrack, userQueues });
-  });
-  
-  let username = null;
-  socket.on('setUsername', (name) => {
-    username = name;
-    const saves = loadUserSaves(username);
-    socket.emit('savedList', saves);
   });
 
   socket.on('saveVideoId', ({ videoId, name }) => {
@@ -151,19 +149,21 @@ io.on('connection', (socket) => {
   });
 
   socket.on('finished', () => {
+    endTrackPlayback();
     playing = false;
     currentTrack = null; // 再生中データをリセット
     playNext();
   });
 
   // 曲追加
-  socket.on('addVideo', (url) => {
+  socket.on('addVideo', ({ url, username }) => {
+    const userId = socketIdToUserId[socket.id];
     const videoId = extractVideoId(url);
     const uniqueId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    const videoObj = { id: uniqueId, videoId, ownerSocketId: socket.id };
+    const videoObj = { id: uniqueId, videoId, ownerUserId: userId, ownerName: username };
 
-    if (!userQueues[socket.id]) userQueues[socket.id] = [];
-    userQueues[socket.id].push(videoObj);
+    if (!userQueues[userId]) userQueues[userId] = [];
+    userQueues[userId].push(videoObj);
 
     broadcastAllQueues();
 
@@ -173,7 +173,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ★スキップ要求
+  // スキップ要求
   socket.on('skipCurrent', () => {
     if (!currentTrack) {
       socket.emit('skipDenied');
@@ -183,96 +183,115 @@ io.on('connection', (socket) => {
     // 履歴曲なら誰でもOK
     if (currentTrack.isHistory) {
       console.log(`履歴曲スキップ許可: ${currentTrack.videoId}`);
+      endTrackPlayback();
       playNext();
       return;
     }
 
-    if (currentTrack && currentTrack.ownerSocketId === socket.id) {
-      console.log(`スキップ許可: ${currentTrack.videoId} by ${socket.clientName}`);
+    const userId = socketIdToUserId[socket.id];
+    if (currentTrack && currentTrack.ownerUserId === userId) {
+      console.log(`スキップ許可: ${currentTrack.videoId}`);
+      endTrackPlayback();
       playNext();
     } else {
-      console.log(`スキップ拒否: 権限なし (${socket.clientName})`);
+      console.log('スキップ拒否: 権限なし');
       socket.emit('skipDenied');
     }
   });
 
   // 削除リクエストを受け取った時
   socket.on('removeVideo', (id) => {
-    const userQueue = userQueues[socket.id];
+    const userId = socketIdToUserId[socket.id];
+    const userQueue = userQueues[userId];
     if (!userQueue) return;
 
     const index = userQueue.findIndex(item => item.id === id);
     if (index !== -1) {
       userQueue.splice(index, 1);
-      console.log(`動画削除: id=${id} from user ${socket.id}`);
+      console.log(`動画削除: id=${id} from user ${userId}`);
       broadcastAllQueues();
     } else {
-      console.log(`削除拒否: id=${id}, socket.id=${socket.id} のキューに存在しない`);
+      console.log(`削除拒否: id=${id}, userId=${userId} のキューに存在しない`);
       socket.emit('removeDenied', id);
     }
   });
+  
+  // 曲再生開始時
+  function startTrackPlayback(track) {
+    trackStartTime = Date.now();
+
+    let history = loadHostHistory();
+    if (!history.find(h => h.videoId === track.videoId)) {
+      history.push({ videoId: track.videoId, name: track.name });
+      saveHostHistory(history);
+    }
+    
+    playing = true;
+    hostSocket.emit('playVideo', track.videoId);
+    broadcastAllQueues();
+  }
+  
+  // 曲終了 / スキップ / 停止時の処理
+  function endTrackPlayback() {
+    if (trackStartTime === null) return;
+    const elapsedSec = Math.floor((Date.now() - trackStartTime) / 1000);
+
+    if(currentTrack.ownerUserId) {
+      for (const userId in waitTimes) {
+        if (userId !== currentTrack.ownerUserId) {
+          waitTimes[userId].time += elapsedSec;
+        }
+      }
+    }
+    console.log(waitTimes); // デバッグ用
+    trackStartTime = null;
+  }
 
   function playNext() {
-    if (userOrder.length === 0 || !hostSocket) {
+    if (!hostSocket) {
       currentTrack = null;
       playing = false;
       broadcastAllQueues();
       return;
     }
+    
+    const sortedUsers = Object.values(waitTimes)
+      .sort((a,b) => b.time - a.time);
 
-    for (let checkedCount = 0; checkedCount < userOrder.length; ++checkedCount) {
-      const userId = userOrder[currentUserIndex];
-      const userQueue = userQueues[userId];
-
-      // 次の曲が見つかった場合
-      if (userQueue && userQueue.length > 0) {
-        currentTrack = userQueue.shift();
-        playing = true;
-
-        // 履歴に追加（重複なし）
-        let history = loadHostHistory();
-        if (!history.find(h => h.videoId === currentTrack.videoId)) {
-          history.push({ videoId: currentTrack.videoId, name: currentTrack.name });
-          saveHostHistory(history);
-        }
-
-        hostSocket.emit('playVideo', currentTrack.videoId);
-        broadcastAllQueues();
-
-        // 次のユーザーへ
-        currentUserIndex = (currentUserIndex + 1) % userOrder.length;
-        return;
-      } else {
-        // このユーザーのキューは空なので次へ
-        currentUserIndex = (currentUserIndex + 1) % userOrder.length;
+    let foundTrack = false;
+    
+    for (const user of sortedUsers) {
+      const userId = user.userId;
+      const queue = userQueues[userId];
+      if (queue && queue.length > 0) {
+        currentTrack = queue.shift();
+        startTrackPlayback(currentTrack);
+        foundTrack = true;
+        break;
       }
     }
 
-    // キューが空の場合、履歴からランダム再生を試みる
-    const history = loadHostHistory();
-    if (history.length === 0) {
-      // 履歴も空なら何もしない
-      currentTrack = null;
-      playing = false;
-      broadcastAllQueues();
-      return;
+    
+    if (!foundTrack) {
+      // 履歴からランダム再生
+      const history = loadHostHistory();
+      if (history.length > 0) {
+        const randIndex = Math.floor(Math.random() * history.length);
+        const historyTrack = {
+          id: `history_${Date.now()}`,
+          name: history[randIndex].name || '履歴の曲',
+          videoId: history[randIndex].videoId,
+          ownerName: null,
+          isHistory: true
+        };
+        currentTrack = historyTrack;
+        startTrackPlayback(historyTrack);
+      } else {
+        currentTrack = null;
+        playing = false;
+        broadcastAllQueues();
+      }
     }
-
-    // ランダムに選ぶ
-    const randIndex = Math.floor(Math.random() * history.length);
-    const videoId = history[randIndex].videoId;
-
-    // currentTrack に履歴曲情報をセット
-    currentTrack = {
-      id: `history_${Date.now()}`,  // 履歴再生用ID（適当でOK）
-      name: history[randIndex].name || '履歴の曲',
-      videoId,
-      ownerSocketId: null,  // 履歴曲なので追加者はなし
-      isHistory: true       // 履歴曲フラグ
-    };
-    playing = true;
-    hostSocket.emit('playVideo', videoId);
-    broadcastAllQueues();
   }
 });
 
