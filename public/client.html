@@ -40,37 +40,61 @@
       }
     });
 
-    socket.on('queueUpdate', (queue) => {
+    socket.on('queueUpdate', ({ currentVideo, queue }) => {
       const listElem = document.getElementById('queueList');
       listElem.innerHTML = '';
 
-      if (queue.length === 0) {
-        listElem.innerHTML = '<li>キューは空です</li>';
+      if (!currentVideo && queue.length === 0) {
+        listElem.innerHTML = '<li>何も再生されていません</li>';
         return;
       }
-
-      queue.forEach((item, i) => {
+      
+      // 再生中の曲を一番上に表示
+      if (currentVideo) {
         const li = document.createElement('li');
+        li.textContent = `[再生中] ${currentVideo.name} - ${currentVideo.videoId}`;
 
-        li.textContent = `${i === 0 ? '[次再生] ' : ''}${item.name} - ${item.videoId} `;
+        // スキップボタン（自分が追加者の場合のみ表示）
+        if (currentVideo.ownerSocketId === socket.id) {
+          const skipBtn = document.createElement('button');
+          skipBtn.textContent = 'スキップ';
+          skipBtn.style.marginLeft = '8px';
+          skipBtn.addEventListener('click', () => {
+            if (confirm('現在の曲をスキップしますか？')) {
+              socket.emit('skipCurrent');
+            }
+          });
+          li.appendChild(skipBtn);
+        }
+
+        listElem.appendChild(li);
+      }
+
+      // 残りのキューを表示
+      queue.forEach((item) => {
+        const li = document.createElement('li');
+        li.textContent = `${item.name} - ${item.videoId}`;
 
         const btn = document.createElement('button');
         btn.textContent = '削除';
         btn.style.marginLeft = '8px';
-
         btn.addEventListener('click', () => {
-          if (confirm(`「${item.videoId}」をキューから削除しますか？`)) {
-            socket.emit('removeVideo', item.id); // idを送る
+          if (confirm(`「${item.videoId}」を削除しますか？`)) {
+            socket.emit('removeVideo', item.id);
           }
         });
-
         li.appendChild(btn);
+
         listElem.appendChild(li);
       });
     });
     
     socket.on('removeDenied', (id) => {
       alert(`動画の削除権限がありません (id=${id})`);
+    });
+
+    socket.on('skipDenied', () => {
+      alert('スキップ権限がありません');
     });
   </script>
 </body>

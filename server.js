@@ -12,6 +12,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 let queue = [];
 let playing = false;
 let hostSocket = null;
+let currentVideo = null; // ★現在再生中の動画情報
 
 // 強化版 動画ID抽出
 function extractVideoId(url) {
@@ -39,7 +40,10 @@ function extractVideoId(url) {
 
 // 追加：クライアント全員にキューの状態を送る関数
 function broadcastQueue() {
-  io.emit('queueUpdate', queue);
+  io.emit('queueUpdate', { 
+    currentVideo, // 再生中の曲
+    queue         // 次に再生される曲一覧
+  });
 }
 
 io.on('connection', (socket) => {
@@ -61,6 +65,7 @@ io.on('connection', (socket) => {
 
   socket.on('finished', () => {
     playing = false;
+    currentVideo = null; // 再生中データをリセット
     playNext();
   });
 
@@ -80,6 +85,21 @@ io.on('connection', (socket) => {
 
     if (!playing && hostSocket) {
       playNext();
+    }
+  });
+
+  // ★スキップ要求
+  socket.on('skipCurrent', () => {
+    if (currentVideo && currentVideo.ownerSocketId === socket.id) {
+      console.log(`スキップ許可: ${currentVideo.videoId} by ${socket.clientName}`);
+      if (hostSocket) {
+        playNext();
+      } else {
+        console.log('ホストが存在しません');
+      }
+    } else {
+      console.log(`スキップ拒否: 権限なし (${socket.clientName})`);
+      socket.emit('skipDenied', currentVideo ? currentVideo.videoId : null);
     }
   });
 
@@ -103,9 +123,14 @@ io.on('connection', (socket) => {
 
   function playNext() {
     if (queue.length > 0 && hostSocket) {
-      const nextItem = queue.shift(); // {name, videoId}
+      const nextItem = queue.shift();
+      currentVideo = nextItem; // ★再生中の動画情報を保存
       playing = true;
       hostSocket.emit('playVideo', nextItem.videoId);
+      broadcastQueue();
+    } else {
+      currentTrack = null; // 再生中の曲がない
+      playing = false;
       broadcastQueue();
     }
   }
