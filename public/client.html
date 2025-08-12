@@ -84,6 +84,7 @@
       // 動画ID抽出
       const videoId = extractVideoId(url);
       if (!videoId) return alert("YouTube動画IDが取得できませんでした");
+      document.getElementById('videoUrl').value = '';
 
       // noembed APIでタイトル取得
       fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`)
