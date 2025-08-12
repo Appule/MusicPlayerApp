@@ -55,6 +55,15 @@
         player.loadVideoById(videoId);
       }
     });
+    
+    // スキップ指示を受け取ったら停止
+    socket.on('skipVideo', () => {
+      console.log("スキップ指示受信");
+      if (player && player.stopVideo) {
+        player.stopVideo();
+      }
+      socket.emit('finished');
+    });
   </script>
 </body>
 </html>
