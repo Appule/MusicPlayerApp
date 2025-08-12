@@ -22,8 +22,8 @@
 
     window.onYouTubeIframeAPIReady = () => {
       player = new YT.Player('player', {
-        height: '390',
-        width: '640',
+        height: '200',
+        width: '320',
         videoId: '',
         events: {
           'onStateChange': onPlayerStateChange,
@@ -55,7 +55,7 @@
         player.loadVideoById(videoId);
       }
     });
-    
+
     // スキップ指示を受け取ったら停止
     socket.on('skipVideo', () => {
       console.log("スキップ指示受信");
