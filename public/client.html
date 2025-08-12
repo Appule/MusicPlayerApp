@@ -151,22 +151,25 @@
       }
     }
 
-    socket.on('queueUpdate', ({ currentVideo, queue }) => {
+    // キューを表示
+    socket.on('queueUpdate', ({ currentTrack, userQueues }) => {
       const listElem = document.getElementById('queueList');
       listElem.innerHTML = '';
 
-      if (!currentVideo && queue.length === 0) {
+      const myQueue = userQueues[socket.id] || [];
+
+      if (!currentTrack && myQueue.length === 0) {
         listElem.innerHTML = '<li>何も再生されていません</li>';
         return;
       }
-      
-      // 再生中の曲を一番上に表示
-      if (currentVideo) {
-        const li = document.createElement('li');
-        li.textContent = `[再生中] ${currentVideo.name} - ${currentVideo.videoId}`;
 
-        // スキップボタン（自分が追加者の場合のみ表示）
-        if (currentVideo.isHistory || currentVideo.ownerSocketId === socket.id) {
+      // 再生中の曲を一番上に表示
+      if (currentTrack) {
+        const li = document.createElement('li');
+        li.textContent = `[再生中] ${currentTrack.name || ''} - ${currentTrack.videoId || ''}`;
+
+        // スキップボタン（自分が追加者の場合、または履歴曲は誰でもスキップ可）
+        if (currentTrack.isHistory || currentTrack.ownerSocketId === socket.id) {
           const skipBtn = document.createElement('button');
           skipBtn.textContent = 'スキップ';
           skipBtn.style.marginLeft = '8px';
@@ -181,10 +184,10 @@
         listElem.appendChild(li);
       }
 
-      // 残りのキューを表示
-      queue.forEach((item) => {
+      // 自分のキューを表示
+      myQueue.forEach((item) => {
         const li = document.createElement('li');
-        li.textContent = `${item.name} - ${item.videoId}`;
+        li.textContent = `${item.name || ''} - ${item.videoId || ''}`;
 
         const btn = document.createElement('button');
         btn.textContent = '削除';
