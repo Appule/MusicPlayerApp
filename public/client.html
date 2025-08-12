@@ -14,18 +14,39 @@
     #queueList li {
       margin-bottom: 4px;
     }
+    .list-container {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
   </style>
 </head>
 <body>
   <h1>クライアント画面</h1>
   <input type="text" id="videoUrl" placeholder="YouTube URLを入力" />
   <button id="sendBtn">キューに追加</button>
+  <button id="saveBtn">保存</button>
 
-  <h3>再生キュー</h3>
-  <ol id="queueList"></ol>
+  <div class="list-container">
+    <div>
+      <h3>再生キュー</h3>
+      <ol id="queueList"></ol>
+    </div>
+    <div>
+      <h3>保存リスト</h3>
+      <ul id="savedList"></ul>
+    </div>
+  </div>
 
   <script>
     const socket = io();
+    let username = localStorage.getItem('username') || null;
+    
+    if (!username) {
+      username = prompt("ユーザー名を入力してください:");
+      localStorage.setItem('username', username);
+    }
+    socket.emit('setUsername', username);
 
     // ページ読み込み時に名前を入力させる
     let clientName = prompt("あなたの名前を入力してください", "名無し");
@@ -39,6 +60,96 @@
         document.getElementById('videoUrl').value = '';
       }
     });
+    
+    document.getElementById('saveBtn').addEventListener('click', () => {
+      const url = document.getElementById('videoUrl').value.trim();
+      if (!url) return alert("URLを入力してください");
+
+      // 動画ID抽出
+      const videoId = extractVideoId(url);
+      if (!videoId) return alert("YouTube動画IDが取得できませんでした");
+
+      // noembed APIでタイトル取得
+      fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`)
+        .then(res => res.json())
+        .then(data => {
+          const title = data.title || videoId;
+          socket.emit('saveVideoId', { videoId, name: title });
+          alert(`保存しました: ${title}`);
+        })
+        .catch(() => {
+          // タイトル取得失敗時はIDを名前に使う
+          socket.emit('saveVideoId', { videoId, name: videoId });
+          alert(`保存しました（タイトル取得失敗）: ${videoId}`);
+        });
+    });
+    
+    // 動画ID抽出関数（サーバーと同じルールで）
+    function extractVideoId(url) {
+      try {
+        const u = new URL(url);
+        if (u.hostname.includes('youtu.be')) {
+          return u.pathname.slice(1);
+        }
+        if (u.searchParams.has('v')) {
+          return u.searchParams.get('v');
+        }
+        const embedMatch = u.pathname.match(/\/embed\/([^/?]+)/);
+        if (embedMatch) {
+          return embedMatch[1];
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    }
+
+    socket.on('savedList', (list) => {
+      const ul = document.getElementById('savedList');
+      ul.innerHTML = '';
+      list.forEach(item => {
+        const li = document.createElement('li');
+
+        const nameInput = document.createElement('input');
+        nameInput.value = item.name;
+        nameInput.addEventListener('change', () => {
+          socket.emit('updateSavedName', { videoId: item.videoId, newName: nameInput.value });
+        });
+
+        const playBtn = document.createElement('button');
+        playBtn.textContent = '再生';
+        playBtn.onclick = () => {
+          const url = `https://www.youtube.com/watch?v=${item.videoId}`;
+          socket.emit('addVideo', url);
+        };
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '削除';
+        delBtn.onclick = () => {
+          if (confirm('削除しますか？')) {
+            socket.emit('deleteSaved', item.videoId);
+          }
+        };
+
+        li.appendChild(nameInput);
+        li.appendChild(playBtn);
+        li.appendChild(delBtn);
+        ul.appendChild(li);
+      });
+    });
+    
+    function saveCurrentUrl() {
+      const url = document.getElementById('url').value;
+      const match = url.match(/(?:v=|youtu\.be\/)([^&]+)/);
+      if (match) {
+        const videoId = match[1];
+        fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`)
+          .then(res => res.json())
+          .then(data => {
+            socket.emit('saveVideoId', { videoId, name: data.title || videoId });
+          });
+      }
+    }
 
     socket.on('queueUpdate', ({ currentVideo, queue }) => {
       const listElem = document.getElementById('queueList');
@@ -55,7 +166,7 @@
         li.textContent = `[再生中] ${currentVideo.name} - ${currentVideo.videoId}`;
 
         // スキップボタン（自分が追加者の場合のみ表示）
-        if (currentVideo.ownerSocketId === socket.id) {
+        if (currentVideo.isHistory || currentVideo.ownerSocketId === socket.id) {
           const skipBtn = document.createElement('button');
           skipBtn.textContent = 'スキップ';
           skipBtn.style.marginLeft = '8px';
