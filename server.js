@@ -243,11 +243,12 @@ io.on('connection', (socket) => {
         }
       }
     }
-    console.log(waitTimes); // デバッグ用
     trackStartTime = null;
   }
 
   function playNext() {
+    console.table(waitTimes); // ログ出力
+
     if (!hostSocket) {
       currentTrack = null;
       playing = false;
